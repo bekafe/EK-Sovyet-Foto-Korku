@@ -1,0 +1,6 @@
+{
+  "name": "Son Tur — Sovyet Binasında Gizli Muhabir",
+  "description": "Terk edilmiş bir Sovyet binasında turist grubuna karışarak gizli fotoğraflar çektiğiniz birinci şahıs 3D gerilim ve gizlilik oyunu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
