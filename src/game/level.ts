@@ -80,6 +80,7 @@ export interface LevelBuildResult {
   elevatorDoorLeft: THREE.Mesh;
   elevatorDoorRight: THREE.Mesh;
   babushkaNpcGroup: THREE.Group;
+  dustParticles: THREE.Points;
 }
 
 /**
@@ -1939,6 +1940,34 @@ export function buildSovietLevel(maxAnisotropy = 4): LevelBuildResult {
     'wp_babushka_oda',
   ];
 
+  // --- Stage 6 Atmosphere Polish: Floating 3D Dust Motes Across the Soviet Halls ---
+  const dustCount = 340;
+  const dustPositions = new Float32Array(dustCount * 3);
+  for (let i = 0; i < dustCount; i++) {
+    // Deterministic pseudo-random distribution across the building footprint
+    const h1 = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+    const h2 = Math.sin(i * 93.9898 + 19.135) * 23421.6312;
+    const h3 = Math.sin(i * 45.1642 + 51.789) * 65432.1234;
+    const rx = h1 - Math.floor(h1);
+    const ry = h2 - Math.floor(h2);
+    const rz = h3 - Math.floor(h3);
+
+    dustPositions[i * 3] = -20 + rx * 52; // X: -20 .. +32
+    dustPositions[i * 3 + 1] = 0.35 + ry * 3.8; // Y: 0.35 .. 4.15
+    dustPositions[i * 3 + 2] = -42 + rz * 50; // Z: -42 .. +8
+  }
+  const dustGeo = new THREE.BufferGeometry();
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+  const dustMat = new THREE.PointsMaterial({
+    color: 0xd8cdb4,
+    size: 0.085,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+  });
+  const dustParticles = new THREE.Points(dustGeo, dustMat);
+  levelGroup.add(dustParticles);
+
   return {
     levelGroup,
     colliders,
@@ -1951,6 +1980,7 @@ export function buildSovietLevel(maxAnisotropy = 4): LevelBuildResult {
     elevatorDoorLeft,
     elevatorDoorRight,
     babushkaNpcGroup,
+    dustParticles,
   };
 }
 

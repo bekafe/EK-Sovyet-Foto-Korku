@@ -311,8 +311,24 @@ export default function App() {
       }
     };
 
+    const resetHidingSpotDoors = () => {
+      for (const spot of levelData.hidingSpots) {
+        spot.currentDoorAngle = 0.62;
+        spot.targetDoorAngle = 0.62;
+        spot.doorPivot.rotation.y = -0.62;
+      }
+    };
+
     const startNewRun = () => {
       const cleanSeed = seedRef.current.trim() || GAME_CONFIG.defaultSeed;
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // Ignore speech synthesis errors
+        }
+      }
+      resetHidingSpotDoors();
       player.reset();
       tourGroup.reset(cleanSeed, difficultyRef.current, levelData.tourStopOrder);
       police.reset(cleanSeed);
@@ -359,6 +375,14 @@ export default function App() {
 
     const returnTitle = () => {
       keysHeld.clear();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // Ignore speech synthesis errors
+        }
+      }
+      resetHidingSpotDoors();
       photoCamera.setAiming(false);
       document.exitPointerLock?.();
       gameStateRef.current = 'title';
@@ -497,6 +521,7 @@ export default function App() {
       const totalTasks = Math.max(1, photoCamera.tasks.length || GAME_CONFIG.photoCamera.tasksPerTour);
       const totalScore = photoCamera.totalScore;
       const rank = evaluateJournalistRank(totalScore);
+      audio.playTourEndFanfare(reason, rank);
       const scoreCode = generateScoreCode({
         seed: seedRef.current,
         difficulty: difficultyRef.current,
@@ -810,6 +835,13 @@ export default function App() {
         let factor = 0.88 + 0.12 * wave;
         if (lamp.isBrokenSpark && wave < -0.55) {
           factor = 0.18;
+          if (gameStateRef.current === 'playing') {
+            const dist = Math.hypot(
+              lamp.light.position.x - player.position.x,
+              lamp.light.position.z - player.position.z,
+            );
+            audio.playLampFlickerBuzz(dist);
+          }
         }
         lamp.light.intensity = lamp.baseIntensity * factor;
         lamp.bulbMat.emissiveIntensity = factor;
@@ -825,6 +857,10 @@ export default function App() {
       elapsedTotal += dt;
 
       updateFlickeringLamps(elapsedTotal);
+
+      // Gentle atmospheric drift for 3D floating dust motes
+      levelData.dustParticles.position.y = Math.sin(elapsedTotal * 0.45) * 0.08;
+      levelData.dustParticles.rotation.y = Math.sin(elapsedTotal * 0.12) * 0.015;
 
       // Gentle welcoming animation for Babushka Valentina on the top floor
       levelData.babushkaNpcGroup.rotation.y =
@@ -1025,6 +1061,7 @@ export default function App() {
             distToBabushka <= GAME_CONFIG.elevator.babushkaInteractRadius;
 
           const policeTel = police.getTelemetry(player.position);
+          audio.updateRoomAmbience(room.id, policeTel.suspicion / 100);
 
           setHud({
             roomName: room.name,

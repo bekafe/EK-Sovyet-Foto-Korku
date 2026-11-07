@@ -9,8 +9,11 @@ export class SoundSynthesizer {
   private isMuted = false;
   private masterVolume = 0.7;
   private ambientOsc: OscillatorNode | null = null;
+  private ambientFilter: BiquadFilterNode | null = null;
   private ambientGain: GainNode | null = null;
   private lastDoorFrictionAt = 0;
+  private lastRoomAccentAt = 0;
+  private lastLampBuzzAt = 0;
 
   private ensureContext(): AudioContext | null {
     if (this.isMuted) return null;
@@ -28,6 +31,13 @@ export class SoundSynthesizer {
 
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
+    if (muted && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore
+      }
+    }
     if (this.ambientGain && this.ctx) {
       this.ambientGain.gain.setTargetAtTime(
         muted ? 0 : 0.045 * this.masterVolume,
@@ -76,11 +86,122 @@ export class SoundSynthesizer {
       osc.start();
 
       this.ambientOsc = osc;
+      this.ambientFilter = filter;
       this.ambientGain = gain;
     } catch {
       // Ignore audio autoplay restriction until user gesture
     }
   }
+
+  /**
+   * Stage 6 Atmosphere Polish: Adapts the room ambient drone & triggers subtle room-specific
+   * environmental acoustic textures (boiler steam hiss, attic radio Morse chirp, Babushka's mantel clock).
+   */
+  public updateRoomAmbience(roomId: string, suspicionNorm: number): void {
+    if (this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (this.ambientOsc && this.ambientFilter && this.ambientGain) {
+      const targetFreq =
+        roomId === 'kazan_dairesi'
+          ? 38
+          : roomId === 'cati_kati'
+            ? 62
+            : roomId === 'babushka_odasi'
+              ? 48
+              : 52;
+      const targetCutoff =
+        (roomId === 'kazan_dairesi' ? 165 : 125) + suspicionNorm * 110;
+      const targetVol = (0.038 + suspicionNorm * 0.025) * this.masterVolume;
+
+      this.ambientOsc.frequency.setTargetAtTime(targetFreq, now, 0.25);
+      this.ambientFilter.frequency.setTargetAtTime(targetCutoff, now, 0.25);
+      this.ambientGain.gain.setTargetAtTime(targetVol, now, 0.25);
+    }
+
+    // Periodic room-specific acoustic details
+    if (roomId === 'kazan_dairesi' && now - this.lastRoomAccentAt > 4.6) {
+      this.lastRoomAccentAt = now;
+      this.playBoilerSteamHiss();
+    } else if (roomId === 'cati_kati' && now - this.lastRoomAccentAt > 4.2) {
+      this.lastRoomAccentAt = now;
+      this.playRadioMorseChirp();
+    } else if (roomId === 'babushka_odasi' && now - this.lastRoomAccentAt > 1.25) {
+      this.lastRoomAccentAt = now;
+      this.playGrandmotherClockTick();
+    }
+  }
+
+  private playBoilerSteamHiss(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const dur = 0.42;
+    const frameCount = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, frameCount, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < frameCount; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2400, now);
+    filter.frequency.exponentialRampToValueAtTime(1400, now + dur);
+    filter.Q.value = 3.5;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.045 * this.masterVolume, now + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(now);
+    src.stop(now + dur + 0.01);
+  }
+
+  private playRadioMorseChirp(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const pattern = [0, 0.11, 0.24];
+    for (let i = 0; i < pattern.length; i++) {
+      const t = now + pattern[i];
+      const dur = i === 1 ? 0.08 : 0.045;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1180, t);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.032 * this.masterVolume, t + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.005);
+    }
+  }
+
+  private playGrandmotherClockTick(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(980, now);
+    osc.frequency.exponentialRampToValueAtTime(240, now + 0.025);
+    gain.gain.setValueAtTime(0.028 * this.masterVolume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.035);
+  }
+
 
   /**
    * Plays a synthesized footstep thud with pitch variation and crouch dampening
@@ -203,7 +324,23 @@ export class SoundSynthesizer {
     osc2.start(now + 0.055);
     osc2.stop(now + 0.12);
 
-    // 3. Optional flash bulb pop & rising capacitor recharge whine
+    // 3. Mechanical 35mm Zenit-E Film-Advance Lever Ratchet (Two crisp gear clicks)
+    for (let r = 0; r < 2; r++) {
+      const rt = now + 0.14 + r * 0.055;
+      const rOsc = ctx.createOscillator();
+      const rGain = ctx.createGain();
+      rOsc.type = 'square';
+      rOsc.frequency.setValueAtTime(1120 + r * 240, rt);
+      rOsc.frequency.exponentialRampToValueAtTime(340, rt + 0.03);
+      rGain.gain.setValueAtTime(0.085 * this.masterVolume, rt);
+      rGain.gain.exponentialRampToValueAtTime(0.001, rt + 0.035);
+      rOsc.connect(rGain);
+      rGain.connect(ctx.destination);
+      rOsc.start(rt);
+      rOsc.stop(rt + 0.04);
+    }
+
+    // 4. Optional flash bulb pop & rising capacitor recharge whine
     if (withFlash) {
       const fOsc = ctx.createOscillator();
       const fGain = ctx.createGain();
@@ -218,6 +355,7 @@ export class SoundSynthesizer {
       fOsc.stop(now + 1.2);
     }
   }
+
 
   /**
    * Plays a subtle warm confirmation chime when a photo task passes quality threshold (>= 60)
@@ -746,7 +884,81 @@ export class SoundSynthesizer {
     // 3. Stun impact & ear-ringing chime
     this.playBatonHitAndStun();
   }
+
+  /**
+   * Plays a brief 100Hz fluorescent ballast buzz when a broken ceiling lamp flickers near the player
+   */
+  public playLampFlickerBuzz(distanceMeters: number): void {
+    if (distanceMeters > 9.0) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    if (now - this.lastLampBuzzAt < 0.75) return;
+    this.lastLampBuzzAt = now;
+
+    const prox = Math.max(0.1, 1 - distanceMeters / 9.0);
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(100, now);
+    osc.frequency.linearRampToValueAtTime(92, now + 0.08);
+
+    filter.type = 'bandpass';
+    filter.frequency.value = 1450;
+    filter.Q.value = 4.5;
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.032 * prox * this.masterVolume, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.09);
+  }
+
+  /**
+   * Plays an end-of-tour darkroom / press fanfare chord when transitioning to the results screen
+   */
+  public playTourEndFanfare(
+    reason: 'tour_finished' | 'caught_by_police',
+    rank: 'Amatör' | 'Muhabir' | 'Usta',
+  ): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes =
+      reason === 'caught_by_police'
+        ? [293.66, 277.18, 220.0] // Descending minor detention sting
+        : rank === 'Usta'
+          ? [261.63, 329.63, 392.0, 523.25] // Triumphant C major press chord
+          : rank === 'Muhabir'
+            ? [261.63, 329.63, 392.0]
+            : [220.0, 261.63, 329.63];
+
+    notes.forEach((freq, idx) => {
+      const start = now + idx * 0.09;
+      const dur = 0.55;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = reason === 'caught_by_police' ? 'sawtooth' : 'triangle';
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.linearRampToValueAtTime(0.11 * this.masterVolume, start + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + dur + 0.02);
+    });
+  }
 }
+
 
 
 
